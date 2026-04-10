@@ -37,7 +37,7 @@ def install_dependencies():
     print("📦 Installing dependencies...")
     for pkg in REQUIRED_PACKAGES:
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", pkg, "-q"],
+            [sys.executable, "-m", "pip", "install", pkg, "-q", "--break-system-packages"],
             check=True
         )
     print("   ✅ Dependencies installed\n")
