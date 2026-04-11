@@ -89,13 +89,22 @@ def read_file(path: str) -> str:
 
 
 def notify_mac(developer: str, file_path: str):
-    """Fire a native Mac OS notification."""
-    import platform
+    """Fire a native macOS notification with the Remi icon."""
+    import platform, shutil
     if platform.system() != "Darwin":
         return
     title   = "Remi"
     message = f"{developer} just made changes to {file_path}"
-    os.system(f'osascript -e \'display notification "{message}" with title "{title}"\'')
+    icon    = str(Path(__file__).parent / "assets" / "remi_icon.png")
+
+    if shutil.which("terminal-notifier") and os.path.exists(icon):
+        os.system(
+            f'terminal-notifier -title "{title}" -message "{message}" '
+            f'-contentImage "{icon}" -sound default'
+        )
+    else:
+        os.system(f'osascript -e \'display notification "{message}" with title "{title}"\'')
+
 
 
 def should_watch(path: str) -> bool:
