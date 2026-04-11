@@ -8,36 +8,81 @@ Deploy this once to Railway/Render/any cheap host.
 from flask import Flask, request, jsonify
 from datetime import datetime
 import threading
+import sqlite3
 import json
 import os
 
 app = Flask(__name__)
 
-# In-memory store (replace with Redis or SQLite for persistence)
-# Structure: { room_id: { file_path: { developer: change_data } } }
-store      = {}
+DB_PATH    = os.environ.get("DB_PATH", "collab_agent.db")
 store_lock = threading.Lock()
 
-CHANGE_TTL_SECONDS = 300  # Changes expire after 5 minutes
+
+# ── Database setup ─────────────────────────────────────────────────────────────
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
-def get_room(room_id: str) -> dict:
-    if room_id not in store:
-        store[room_id] = {}
-    return store[room_id]
+def init_db():
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS changes (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id       TEXT NOT NULL,
+                file_path     TEXT NOT NULL,
+                developer     TEXT NOT NULL,
+                content       TEXT NOT NULL,
+                intent        TEXT DEFAULT '',
+                timestamp     TEXT NOT NULL,
+                timestamp_unix REAL NOT NULL,
+                UNIQUE(room_id, file_path, developer)
+            )
+        """)
+        conn.commit()
 
 
-def clean_expired(room: dict):
-    """Remove changes older than TTL."""
-    now = datetime.now().timestamp()
-    for file_path in list(room.keys()):
-        for dev in list(room[file_path].keys()):
-            ts = room[file_path][dev].get("timestamp_unix", 0)
-            if now - ts > CHANGE_TTL_SECONDS:
-                del room[file_path][dev]
-        if not room[file_path]:
-            del room[file_path]
+init_db()
 
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def get_partner_change(conn, room_id: str, file_path: str, developer: str):
+    """Return the most recent change to this file by any other developer."""
+    row = conn.execute("""
+        SELECT * FROM changes
+        WHERE room_id = ? AND file_path = ? AND developer != ?
+        ORDER BY timestamp_unix DESC
+        LIMIT 1
+    """, (room_id, file_path, developer)).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_change(conn, room_id, file_path, developer, content, intent, timestamp):
+    conn.execute("""
+        INSERT INTO changes (room_id, file_path, developer, content, intent, timestamp, timestamp_unix)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(room_id, file_path, developer) DO UPDATE SET
+            content        = excluded.content,
+            intent         = excluded.intent,
+            timestamp      = excluded.timestamp,
+            timestamp_unix = excluded.timestamp_unix
+    """, (room_id, file_path, developer, content, intent, timestamp, datetime.now().timestamp()))
+    conn.commit()
+
+
+def delete_change(conn, room_id: str, file_path: str, developer: str):
+    """Remove a change after a conflict is resolved so it doesn't re-trigger."""
+    conn.execute("""
+        DELETE FROM changes
+        WHERE room_id = ? AND file_path = ? AND developer = ?
+    """, (room_id, file_path, developer))
+    conn.commit()
+
+
+# ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.route("/push", methods=["POST"])
 def push():
@@ -57,33 +102,17 @@ def push():
         return jsonify({"error": "Missing required fields"}), 400
 
     with store_lock:
-        room = get_room(room_id)
-        clean_expired(room)
+        with get_db() as conn:
+            conflict = get_partner_change(conn, room_id, file_path, developer)
+            upsert_change(conn, room_id, file_path, developer, content, intent, timestamp)
 
-        if file_path not in room:
-            room[file_path] = {}
-
-        # Check for conflict — another dev has touched this file recently
-        conflict = None
-        for dev, change in room[file_path].items():
-            if dev != developer:
-                conflict = change
-                break
-
-        # Store this developer's change
-        room[file_path][developer] = {
-            "developer":     developer,
-            "content":       content,
-            "intent":        intent,
-            "timestamp":     timestamp,
-            "timestamp_unix": datetime.now().timestamp()
-        }
+            if conflict:
+                # Clear both sides so the resolved version doesn't re-trigger
+                delete_change(conn, room_id, file_path, developer)
+                delete_change(conn, room_id, file_path, conflict["developer"])
 
     if conflict:
-        return jsonify({
-            "status":   "conflict",
-            "conflict": conflict
-        })
+        return jsonify({"status": "conflict", "conflict": conflict})
     else:
         return jsonify({"status": "ok"})
 
@@ -101,16 +130,38 @@ def poll():
         return jsonify({"error": "Missing room or developer"}), 400
 
     with store_lock:
-        room = get_room(room_id)
-        clean_expired(room)
+        with get_db() as conn:
+            rows = conn.execute("""
+                SELECT * FROM changes
+                WHERE room_id = ? AND developer != ?
+                ORDER BY timestamp_unix ASC
+            """, (room_id, developer)).fetchall()
 
-        changes = []
-        for file_path, devs in room.items():
-            for dev, change in devs.items():
-                if dev != developer:
-                    changes.append(change)
-
+    changes = [dict(row) for row in rows]
     return jsonify({"changes": changes})
+
+
+@app.route("/resolve", methods=["POST"])
+def resolve():
+    """
+    Mark a conflict as resolved — removes both sides from the store.
+    Called by the agent after writing the merged file.
+    """
+    data      = request.json
+    room_id   = data.get("room")
+    file_path = data.get("file")
+
+    if not room_id or not file_path:
+        return jsonify({"error": "Missing room or file"}), 400
+
+    with store_lock:
+        with get_db() as conn:
+            conn.execute("""
+                DELETE FROM changes WHERE room_id = ? AND file_path = ?
+            """, (room_id, file_path))
+            conn.commit()
+
+    return jsonify({"status": "resolved"})
 
 
 @app.route("/status", methods=["GET"])
@@ -118,27 +169,32 @@ def status():
     """Health check + room status."""
     room_id = request.args.get("room")
     with store_lock:
-        if room_id:
-            room  = get_room(room_id)
-            files = {f: list(devs.keys()) for f, devs in room.items()}
-            return jsonify({
-                "status":    "ok",
-                "room":      room_id,
-                "active_files": files
-            })
-        return jsonify({"status": "ok", "rooms": len(store)})
+        with get_db() as conn:
+            if room_id:
+                rows = conn.execute("""
+                    SELECT file_path, developer FROM changes WHERE room_id = ?
+                """, (room_id,)).fetchall()
+                files = {}
+                for row in rows:
+                    files.setdefault(row["file_path"], []).append(row["developer"])
+                return jsonify({"status": "ok", "room": room_id, "active_files": files})
+
+            count = conn.execute("SELECT COUNT(DISTINCT room_id) FROM changes").fetchone()[0]
+            return jsonify({"status": "ok", "rooms": count})
 
 
 @app.route("/")
 def index():
     return jsonify({
-        "service": "Collab Agent Sync Server",
-        "version": "1.0.0",
-        "endpoints": ["/push", "/poll", "/status"]
+        "service":   "Collab Agent Sync Server",
+        "version":   "2.0.0",
+        "storage":   "SQLite (persistent)",
+        "endpoints": ["/push", "/poll", "/resolve", "/status"]
     })
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     print(f"🚀 Collab Agent server running on port {port}")
+    print(f"   Database: {DB_PATH}")
     app.run(host="0.0.0.0", port=port, debug=False)
