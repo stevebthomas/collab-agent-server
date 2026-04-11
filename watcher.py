@@ -160,12 +160,32 @@ def should_watch(path: str) -> bool:
     if p.name.startswith("."):
         return False
     if p.name in {"remi_log.md", "remi_memory.json", "codebase_map.json",
-                  "agent_log.md", "agent_memory.json"}:
+                  "remi_updates.md", "agent_log.md", "agent_memory.json"}:
         return False
     for part in p.parts:
         if part in IGNORED_DIRS:
             return False
     return p.suffix in WATCHED_EXTS
+
+
+# ── Activity feed ────────────────────────────────────────────────────────────
+
+def write_update(project_path: str, emoji: str, developer: str, file_path: str, message: str):
+    """Append a 2-line entry to remi_updates.md, with a date header if needed."""
+    updates_path = Path(project_path) / "remi_updates.md"
+    now          = datetime.now()
+    today_header = f"## {now.strftime('%A, %B %-d')}"
+    time_str     = now.strftime("%H:%M")
+
+    existing = updates_path.read_text() if updates_path.exists() else ""
+
+    with open(updates_path, "a") as f:
+        if today_header not in existing:
+            if existing and not existing.endswith("\n\n"):
+                f.write("\n\n")
+            f.write(f"{today_header}\n\n")
+        f.write(f"{emoji} {time_str}  {developer}  {file_path}\n")
+        f.write(f"          {message}\n\n")
 
 
 # ── Server sync ───────────────────────────────────────────────────────────────
@@ -188,10 +208,10 @@ def push_change(config: dict, file_path: str, content: str, intent: str = ""):
         return None
 
 
-def push_intent(config: dict, file_path: str, intent: str):
-    """Push a file's inferred intent to the registry."""
+def push_intent(config: dict, file_path: str, intent: str) -> bool:
+    """Push a file's inferred intent to the registry. Returns True if this is a new file."""
     if not intent:
-        return
+        return False
     try:
         payload = {
             "room_id":   config["room_id"],
@@ -202,8 +222,10 @@ def push_intent(config: dict, file_path: str, intent: str):
         r = requests.post(f"{config['server_url']}/intent/update", json=payload, timeout=5)
         if r.ok:
             log.info(f"Intent pushed for {file_path}")
+            return r.json().get("new_file", False)
     except Exception as e:
         log.warning(f"Could not push intent: {e}")
+    return False
 
 
 def poll_partner_changes(config: dict) -> list:
@@ -279,8 +301,12 @@ class ChangeHandler(FileSystemEventHandler):
         # Silently infer intent from file content
         intent = infer_intent(rel_path, content)
         if intent:
-            push_intent(self.config, rel_path, intent)
+            is_new = push_intent(self.config, rel_path, intent)
             log.info(f"[{name}] Intent inferred for {rel_path}: {intent}")
+            if is_new:
+                write_update(self.project_path, "📄",
+                             self.config["developer_name"], rel_path, intent)
+                log.info(f"[{name}] New file registered: {rel_path}")
 
         self.state[path] = {
             "hash":      new_hash,
@@ -326,8 +352,16 @@ class ChangeHandler(FileSystemEventHandler):
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(result["merged_code"])
 
-            log.info(f"Merged code written to {rel_path} (confidence: {result.get('confidence')})")
+            confidence = result.get("confidence", "?")
+            log.info(f"Merged code written to {rel_path} (confidence: {confidence})")
             notify_mac("✅ Conflict resolved", f"Agent merged changes to {rel_path}")
+            write_update(self.project_path, "✅",
+                         self.config["developer_name"], rel_path,
+                         f"Merged with {dev_b['developer']} — confidence: {confidence}")
+            if confidence == "low":
+                write_update(self.project_path, "⚠️",
+                             self.config["developer_name"], rel_path,
+                             "Low confidence merge — please review manually")
 
         except Exception as e:
             log.error(f"Agent failed to resolve conflict: {e}")
@@ -338,13 +372,59 @@ class ChangeHandler(FileSystemEventHandler):
 class PartnerPoller(threading.Thread):
     def __init__(self, config: dict, handler: ChangeHandler):
         super().__init__(daemon=True)
-        self.config  = config
-        self.handler = handler
-        self.seen    = set()
+        self.config      = config
+        self.handler     = handler
+        self.seen        = set()
+        self.known_files = set()
+
+    def _seed_known_files(self):
+        """Populate known_files from current registry so startup doesn't flood updates."""
+        try:
+            r = requests.get(
+                f"{self.config['server_url']}/intent/registry",
+                params={"room_id": self.config["room_id"]},
+                timeout=5
+            )
+            if r.ok:
+                self.known_files = set(r.json().keys())
+                log.info(f"Seeded known_files with {len(self.known_files)} entries")
+        except Exception as e:
+            log.warning(f"Could not seed known_files: {e}")
+
+    def poll_new_files(self):
+        """Check registry for files added by partners since last check."""
+        try:
+            r = requests.get(
+                f"{self.config['server_url']}/intent/registry",
+                params={"room_id": self.config["room_id"]},
+                timeout=5
+            )
+            if not r.ok:
+                return
+            registry = r.json()
+            for file_path, info in registry.items():
+                if file_path in self.known_files:
+                    continue
+                self.known_files.add(file_path)
+                developer = info.get("developer", "unknown")
+                # Skip our own files — we already logged those in _handle
+                if developer == self.config["developer_name"]:
+                    continue
+                intent = info.get("intent", "")
+                write_update(self.handler.project_path, "📄",
+                             developer, file_path, intent)
+                print(f"📄 New file: {file_path} ({developer}) — {intent}")
+                log.info(f"Partner new file: {file_path} from {developer}")
+        except Exception as e:
+            log.warning(f"New file poll error: {e}")
 
     def run(self):
+        self._seed_known_files()
+        new_file_tick = 0
+
         while True:
             try:
+                # Poll for partner conflict changes every SYNC_INTERVAL seconds
                 changes = poll_partner_changes(self.config)
                 for change in changes:
                     key = f"{change['developer']}:{change['file']}:{change['timestamp']}"
@@ -364,6 +444,12 @@ class PartnerPoller(threading.Thread):
                             self.handler.project_path, connected_files
                         )
                         self.handler._resolve(change["file"], my_content, change, codebase_context)
+
+                # Poll for new files in registry every 30 seconds (6 × 5s ticks)
+                new_file_tick += 1
+                if new_file_tick >= 6:
+                    new_file_tick = 0
+                    self.poll_new_files()
 
             except Exception as e:
                 log.warning(f"Partner poll error: {e}")

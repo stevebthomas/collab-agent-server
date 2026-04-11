@@ -192,13 +192,18 @@ def intent_update():
 
     with store_lock:
         with get_db() as conn:
+            existing = conn.execute("""
+                SELECT 1 FROM intent_registry WHERE room_id = ? AND file_path = ?
+            """, (room_id, file_path)).fetchone()
+            new_file = existing is None
+
             conn.execute("""
                 INSERT INTO intent_registry (room_id, developer, file_path, intent, timestamp_unix)
                 VALUES (?, ?, ?, ?, ?)
             """, (room_id, developer, file_path, intent, datetime.now().timestamp()))
             conn.commit()
 
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "new_file": new_file})
 
 
 @app.route("/intent/registry", methods=["GET"])

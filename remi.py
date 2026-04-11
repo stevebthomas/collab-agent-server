@@ -91,7 +91,7 @@ def cmd_init():
 
     # Update .gitignore
     gitignore_path = cwd / ".gitignore"
-    entries        = [".remi/", "remi_log.md", "remi_memory.json", "codebase_map.json"]
+    entries        = [".remi/", "remi_log.md", "remi_memory.json", "codebase_map.json", "remi_updates.md"]
     existing       = gitignore_path.read_text() if gitignore_path.exists() else ""
     new_entries    = [e for e in entries if e not in existing]
     if new_entries:
