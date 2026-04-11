@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Remi - Installer
-Run this once. It sets everything up and disappears into the background.
+Run once per machine. Sets up developer identity and background service.
+Then cd into any project and run 'remi init' to start watching it.
 """
 
 import os
@@ -11,17 +12,12 @@ import platform
 import subprocess
 from pathlib import Path
 
-CONFIG_DIR  = Path.home() / ".remi"
-CONFIG_PATH = CONFIG_DIR / "config.json"
-PLIST_PATH  = Path.home() / "Library" / "LaunchAgents" / "com.remi-agent.plist"
+CONFIG_DIR   = Path.home() / ".collab-agent"
+CONFIG_PATH  = CONFIG_DIR / "config.json"
+PLIST_PATH   = Path.home() / "Library" / "LaunchAgents" / "com.remi-agent.plist"
 SERVICE_NAME = "remi-agent"
 
-REQUIRED_PACKAGES = [
-    "anthropic",
-    "watchdog",
-    "requests",
-    "flask"
-]
+REQUIRED_PACKAGES = ["anthropic", "watchdog", "requests", "flask"]
 
 
 def banner():
@@ -44,58 +40,40 @@ def install_dependencies():
 
 
 def get_config() -> dict:
-    print("⚙️  Let's set up your config (one time only)\n")
+    print("⚙️  Developer setup (one time only)\n")
 
     developer_name = input("   Your name (e.g. Alex): ").strip()
     if not developer_name:
         developer_name = "Developer"
 
-    room_id = input("   Room ID — share this with your team (e.g. mygame2024): ").strip()
-    if not room_id:
-        room_id = "default-room"
-
-    server_url = input("   Server URL (press Enter to use localhost for testing): ").strip()
-    if not server_url:
-        server_url = "http://localhost:8080"
-
-    project_path = input("   Full path to your project folder: ").strip()
-    project_path = os.path.expanduser(project_path)
-    if not os.path.isdir(project_path):
-        print(f"   ⚠️  Directory not found: {project_path}")
-        print("   Creating it...")
-        os.makedirs(project_path, exist_ok=True)
-
     api_key = input("   Anthropic API key: ").strip()
 
     return {
         "developer_name": developer_name,
-        "room_id":        room_id,
-        "server_url":     server_url,
-        "project_path":   project_path,
-        "api_key":        api_key
+        "api_key":        api_key,
+        "api_key_path":   str(CONFIG_DIR / ".api_key")
     }
 
 
 def save_config(config: dict):
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    # Save config without API key in plain config
-    safe_config = {k: v for k, v in config.items() if k != "api_key"}
+
+    # Save developer config (no API key in plain config)
+    safe_config = {"developer_name": config["developer_name"]}
     with open(CONFIG_PATH, "w") as f:
         json.dump(safe_config, f, indent=2)
 
-    # Save API key separately in a secured file
+    # Save API key separately, owner-read-only
     key_path = CONFIG_DIR / ".api_key"
     with open(key_path, "w") as f:
         f.write(config["api_key"])
-    os.chmod(key_path, 0o600)  # Only owner can read
+    os.chmod(key_path, 0o600)
 
     print(f"   ✅ Config saved to {CONFIG_PATH}\n")
 
 
 def get_watcher_path() -> str:
-    """Find where watcher.py is located."""
-    # Check same directory as this install script
-    here = Path(__file__).parent
+    here    = Path(__file__).parent
     watcher = here / "watcher.py"
     if watcher.exists():
         return str(watcher.resolve())
@@ -146,7 +124,6 @@ def register_mac(config: dict):
     with open(PLIST_PATH, "w") as f:
         f.write(plist_content)
 
-    # Load the service
     subprocess.run(["launchctl", "unload", str(PLIST_PATH)], capture_output=True)
     result = subprocess.run(["launchctl", "load", str(PLIST_PATH)], capture_output=True)
 
@@ -187,11 +164,9 @@ def register_windows(config: dict):
         f.write(task_xml)
 
     result = subprocess.run(
-        ["schtasks", "/create", "/tn", SERVICE_NAME,
-         "/xml", str(task_path), "/f"],
+        ["schtasks", "/create", "/tn", SERVICE_NAME, "/xml", str(task_path), "/f"],
         capture_output=True
     )
-
     if result.returncode == 0:
         subprocess.run(["schtasks", "/run", "/tn", SERVICE_NAME])
         print("   ✅ Registered as Windows scheduled task (starts on login)\n")
@@ -205,9 +180,8 @@ def register_linux(config: dict):
     watcher_path = get_watcher_path()
     api_key_path = str(CONFIG_DIR / ".api_key")
 
-    service_dir = Path.home() / ".config" / "systemd" / "user"
+    service_dir  = Path.home() / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True, exist_ok=True)
-    service_path = service_dir / "remi-agent.service"
 
     service_content = f"""[Unit]
 Description=Remi - Silent collaborative coding agent
@@ -223,8 +197,7 @@ RestartSec=10
 [Install]
 WantedBy=default.target
 """
-
-    with open(service_path, "w") as f:
+    with open(service_dir / "remi-agent.service", "w") as f:
         f.write(service_content)
 
     subprocess.run(["systemctl", "--user", "daemon-reload"])
@@ -243,31 +216,34 @@ def register_background_service(config: dict):
     elif system == "Linux":
         register_linux(config)
     else:
-        print(f"   ⚠️  Unknown OS: {system}. Start manually with: python watcher.py")
+        watcher_path = get_watcher_path()
+        print(f"   ⚠️  Unknown OS. Start manually with: python {watcher_path}")
 
 
 def print_success(config: dict):
     print(f"""
 ╔═══════════════════════════════════════════════════════╗
-║               ✅ Remi is running!                     ║
+║               ✅ Remi is installed!                   ║
 ╚═══════════════════════════════════════════════════════╝
 
-  Developer:  {config['developer_name']}
-  Room:       {config['room_id']}
-  Watching:   {config['project_path']}
-  Server:     {config['server_url']}
+  Developer: {config['developer_name']}
+  Config:    {CONFIG_PATH}
 
-  The agent is now running silently in the background.
-  It will restart automatically every time you log in.
+  Remi is running in the background and will restart on login.
 
-  The only thing you need to check:
-  👉  {config['project_path']}/remi_log.md
+  Next step — initialise a project:
 
-  Share your Room ID ({config['room_id']}) with your teammates
-  so Remi connects to the same room.
+    cd ~/your-project
+    remi init
 
-  To check Remi's logs if something seems wrong:
-  👉  ~/.remi/daemon.log
+  This registers the project with Remi and starts watching it.
+  Share the Room ID it gives you with your teammates.
+
+  To check status across all projects:
+    remi status
+
+  Daemon logs:
+    ~/.collab-agent/daemon.log
 """)
 
 

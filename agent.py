@@ -6,36 +6,44 @@ from anthropic import Anthropic
 from mapper import get_connected_files, read_connected_content, build_map, save_map, load_map, should_rebuild
 
 client = Anthropic()
-LOG_FILE = "remi_log.md"
-MEMORY_FILE = "remi_memory.json"
 
 
-def read_log() -> str:
+def _log_path(project_path: str) -> str:
+    return os.path.join(project_path, "remi_log.md")
+
+
+def _memory_path(project_path: str) -> str:
+    return os.path.join(project_path, "remi_memory.json")
+
+
+def read_log(project_path: str = ".") -> str:
     """Read the existing agent log for context."""
-    if not os.path.exists(LOG_FILE):
+    path = _log_path(project_path)
+    if not os.path.exists(path):
         return "No previous history."
-    with open(LOG_FILE, "r") as f:
+    with open(path, "r") as f:
         content = f.read()
     return content if content.strip() else "No previous history."
 
 
-def read_memory() -> dict:
+def read_memory(project_path: str = ".") -> dict:
     """Read the agent's compressed memory/patterns."""
-    if not os.path.exists(MEMORY_FILE):
+    path = _memory_path(project_path)
+    if not os.path.exists(path):
         return {"patterns": [], "ownership": {}, "summary": "No memory yet."}
-    with open(MEMORY_FILE, "r") as f:
+    with open(path, "r") as f:
         return json.load(f)
 
 
-def write_memory(memory: dict):
+def write_memory(memory: dict, project_path: str = "."):
     """Save updated memory back to file."""
-    with open(MEMORY_FILE, "w") as f:
+    with open(_memory_path(project_path), "w") as f:
         json.dump(memory, f, indent=2)
 
 
-def append_to_log(entry: str):
+def append_to_log(entry: str, project_path: str = "."):
     """Append a new entry to the markdown log."""
-    with open(LOG_FILE, "a") as f:
+    with open(_log_path(project_path), "a") as f:
         f.write(entry + "\n\n")
 
 
@@ -79,8 +87,9 @@ def analyze_and_resolve(dev_a: dict, dev_b: dict, codebase_context: str = "", co
       - file: which file they were working on
     """
 
-    log_history = read_log()
-    memory = read_memory()
+    project_path = config.get("project_path", ".") if config else "."
+    log_history  = read_log(project_path)
+    memory       = read_memory(project_path)
 
     intent_registry = {}
     if config:
@@ -170,7 +179,7 @@ Code:
             "date": datetime.now().isoformat()
         })
 
-    write_memory(memory)
+    write_memory(memory, project_path)
 
     return result
 
@@ -221,17 +230,18 @@ def run_agent(dev_a: dict, dev_b: dict, codebase_context: str = "", config: dict
     print(f"\n🐀 Remi running...")
     print(f"   Analyzing push from {dev_a['developer']} and {dev_b['developer']}...")
 
-    result = analyze_and_resolve(dev_a, dev_b, codebase_context, config=config)
+    result       = analyze_and_resolve(dev_a, dev_b, codebase_context, config=config)
+    project_path = config.get("project_path", ".") if config else "."
 
     log_entry = format_log_entry(dev_a, dev_b, result)
-    append_to_log(log_entry)
+    append_to_log(log_entry, project_path)
 
     # Print summary to terminal
     conflict_status = "⚠️  CONFLICT DETECTED" if result["conflict_detected"] else "✅  NO CONFLICT"
     print(f"\n{conflict_status}")
     print(f"   {result['conflict_description']}")
     print(f"\n📝 Resolution: {result['resolution']}")
-    print(f"\n📁 Log updated: {LOG_FILE}")
+    print(f"\n📁 Log updated: {_log_path(project_path)}")
 
     if result.get("new_pattern"):
         print(f"\n🧠 Pattern learned: {result['new_pattern']}")
