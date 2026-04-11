@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Collab Agent - Installer
+Remi - Installer
 Run this once. It sets everything up and disappears into the background.
 """
 
@@ -11,10 +11,10 @@ import platform
 import subprocess
 from pathlib import Path
 
-CONFIG_DIR  = Path.home() / ".collab-agent"
+CONFIG_DIR  = Path.home() / ".remi"
 CONFIG_PATH = CONFIG_DIR / "config.json"
-PLIST_PATH  = Path.home() / "Library" / "LaunchAgents" / "com.collab-agent.plist"
-SERVICE_NAME = "collab-agent"
+PLIST_PATH  = Path.home() / "Library" / "LaunchAgents" / "com.remi-agent.plist"
+SERVICE_NAME = "remi-agent"
 
 REQUIRED_PACKAGES = [
     "anthropic",
@@ -27,7 +27,7 @@ REQUIRED_PACKAGES = [
 def banner():
     print("""
 ╔═══════════════════════════════════════╗
-║         Collab Agent Installer        ║
+║            Remi Installer             ║
 ║   Set up once. Runs forever silently. ║
 ╚═══════════════════════════════════════╝
 """)
@@ -114,7 +114,7 @@ def register_mac(config: dict):
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.collab-agent</string>
+    <string>com.remi-agent</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -207,10 +207,10 @@ def register_linux(config: dict):
 
     service_dir = Path.home() / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True, exist_ok=True)
-    service_path = service_dir / "collab-agent.service"
+    service_path = service_dir / "remi-agent.service"
 
     service_content = f"""[Unit]
-Description=Collab Agent - Silent collaborative coding agent
+Description=Remi - Silent collaborative coding agent
 After=network.target
 
 [Service]
@@ -228,8 +228,8 @@ WantedBy=default.target
         f.write(service_content)
 
     subprocess.run(["systemctl", "--user", "daemon-reload"])
-    subprocess.run(["systemctl", "--user", "enable", "collab-agent"])
-    subprocess.run(["systemctl", "--user", "start", "collab-agent"])
+    subprocess.run(["systemctl", "--user", "enable", "remi-agent"])
+    subprocess.run(["systemctl", "--user", "start", "remi-agent"])
     print("   ✅ Registered as systemd service (starts on login)\n")
 
 
@@ -249,7 +249,7 @@ def register_background_service(config: dict):
 def print_success(config: dict):
     print(f"""
 ╔═══════════════════════════════════════════════════════╗
-║              ✅ Collab Agent is running!              ║
+║               ✅ Remi is running!                     ║
 ╚═══════════════════════════════════════════════════════╝
 
   Developer:  {config['developer_name']}
@@ -261,13 +261,13 @@ def print_success(config: dict):
   It will restart automatically every time you log in.
 
   The only thing you need to check:
-  👉  {config['project_path']}/agent_log.md
+  👉  {config['project_path']}/remi_log.md
 
   Share your Room ID ({config['room_id']}) with your teammates
-  so their agent connects to the same room.
+  so Remi connects to the same room.
 
-  To check agent logs if something seems wrong:
-  👉  ~/.collab-agent/daemon.log
+  To check Remi's logs if something seems wrong:
+  👉  ~/.remi/daemon.log
 """)
 
 

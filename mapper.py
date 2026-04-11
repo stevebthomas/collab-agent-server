@@ -1,5 +1,5 @@
 """
-Collab Agent - Codebase Mapper
+Remi - Codebase Mapper
 Scans the project folder and builds a relationship map of:
 - What functions/classes are defined in each file
 - What functions/classes each file calls or imports

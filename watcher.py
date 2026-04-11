@@ -1,5 +1,5 @@
 """
-Collab Agent - File Watcher Daemon
+Remi - File Watcher Daemon
 Runs silently in the background, watches for file changes,
 syncs with partner, and triggers the agent automatically.
 """
@@ -48,7 +48,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
-log = logging.getLogger("collab-agent")
+log = logging.getLogger("remi")
 
 
 def load_config() -> dict:
@@ -86,6 +86,16 @@ def read_file(path: str) -> str:
             return f.read()
     except Exception:
         return ""
+
+
+def notify_mac(developer: str, file_path: str):
+    """Fire a native Mac OS notification."""
+    import platform
+    if platform.system() != "Darwin":
+        return
+    title   = "Remi"
+    message = f"{developer} just made changes to {file_path}"
+    os.system(f'osascript -e \'display notification "{message}" with title "{title}"\'')
 
 
 def should_watch(path: str) -> bool:
@@ -195,7 +205,7 @@ class ChangeHandler(FileSystemEventHandler):
         rel_path = os.path.relpath(path, self.project_path)
 
         log.info(f"Change detected: {rel_path}")
-        print(f"💾 Change detected: {rel_path}")
+        print(f"💾 Remi: Change detected: {rel_path}")
 
         # Update local state
         self.state[path] = {
@@ -250,6 +260,7 @@ class ChangeHandler(FileSystemEventHandler):
                 f.write(result["merged_code"])
 
             log.info(f"Merged code written to {rel_path}")
+            notify_mac("✅ Conflict resolved", f"Agent merged changes to {rel_path}")
 
         except Exception as e:
             log.error(f"Agent failed to resolve conflict: {e}")
@@ -281,6 +292,7 @@ class PartnerPoller(threading.Thread):
                     if os.path.exists(full_path):
                         my_content = read_file(full_path)
                         log.info(f"Partner change detected: {change['developer']} → {change['file']}")
+                        notify_mac(change['developer'], change['file'])
                         with self.handler.map_lock:
                             codebase_map = self.handler.codebase_map
                         connected_files  = get_connected_files(codebase_map, change["file"])
@@ -324,13 +336,13 @@ def run_daemon():
     config       = load_config()
     project_path = config["project_path"]
 
-    log.info(f"Collab Agent started")
+    log.info(f"Remi started")
     log.info(f"Developer: {config['developer_name']}")
     log.info(f"Watching:  {project_path}")
     log.info(f"Room:      {config['room_id']}")
 
-    print(f"🤖 Collab Agent starting...")
-    print(f"✅ Collab Agent started")
+    print(f"🐀 Remi is waking up...")
+    print(f"✅ Remi is awake")
     print(f"   Developer : {config['developer_name']}")
     print(f"   Watching  : {project_path}")
     print(f"   Room      : {config['room_id']}")
@@ -362,7 +374,8 @@ def run_daemon():
             time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
-        log.info("Collab Agent stopped")
+        log.info("Remi is going to sleep")
+        print("🐀 Remi is going to sleep")
 
     observer.join()
 
