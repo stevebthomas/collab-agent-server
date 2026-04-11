@@ -27,7 +27,7 @@ from datetime import datetime
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from agent import run_agent
+from agent import run_agent, infer_intent
 from mapper import get_connected_files, read_connected_content, build_map, save_map, load_map, should_rebuild
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -235,13 +235,11 @@ class ChangeHandler(FileSystemEventHandler):
         log.info(f"Change detected: {rel_path}")
         print(f"💾 Remi: Change detected: {rel_path}")
 
-        # Capture intent from the developer
-        try:
-            intent = input(f"📝 What does {rel_path} do? (Enter to skip): ").strip()
-        except (EOFError, OSError):
-            intent = ""
+        # Infer intent from file content silently
+        intent = infer_intent(rel_path, content)
         if intent:
             push_intent(self.config, rel_path, intent)
+            log.info(f"Intent inferred for {rel_path}: {intent}")
 
         # Update local state
         self.state[path] = {

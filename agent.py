@@ -39,6 +39,25 @@ def append_to_log(entry: str):
         f.write(entry + "\n\n")
 
 
+def infer_intent(file_path: str, content: str) -> str:
+    """Ask Claude to infer what a file does from its content."""
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=80,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"In one concise sentence, describe what this file does.\n\n"
+                    f"File: {file_path}\n\n{content[:3000]}"
+                )
+            }]
+        )
+        return response.content[0].text.strip()
+    except Exception:
+        return ""
+
+
 def fetch_intent_registry(server_url: str, room_id: str) -> dict:
     """Fetch the full intent registry from the sync server."""
     try:
