@@ -6,18 +6,29 @@ syncs with partner, and triggers the agent automatically.
 
 import os
 import sys
+from pathlib import Path
+
+# ── Load API key before importing agent (Anthropic client initialises at import time) ──
+_API_KEY_PATH = Path.home() / ".collab-agent" / ".api_key"
+if _API_KEY_PATH.exists():
+    os.environ["ANTHROPIC_API_KEY"] = _API_KEY_PATH.read_text().strip()
+else:
+    print("❌ API key not found at ~/.collab-agent/.api_key")
+    print("   Run install.py or create the file manually.")
+    sys.exit(1)
+
 import time
 import json
 import hashlib
 import logging
 import threading
 import requests
-from pathlib import Path
 from datetime import datetime
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 from agent import run_agent
+from mapper import get_connected_files, read_connected_content, build_map, save_map, load_map, should_rebuild
 
 # ── Config ────────────────────────────────────────────────────────────────────
 CONFIG_PATH = Path.home() / ".collab-agent" / "config.json"
@@ -134,12 +145,14 @@ def poll_partner_changes(config: dict) -> list:
 # ── Change handler ────────────────────────────────────────────────────────────
 
 class ChangeHandler(FileSystemEventHandler):
-    def __init__(self, config: dict, project_path: str):
-        self.config       = config
-        self.project_path = project_path
-        self.state        = load_state()
-        self.pending      = {}   # file -> timer
-        self.lock         = threading.Lock()
+    def __init__(self, config: dict, project_path: str, codebase_map: dict = None):
+        self.config        = config
+        self.project_path  = project_path
+        self.state         = load_state()
+        self.pending       = {}   # file -> timer
+        self.lock          = threading.Lock()
+        self.codebase_map  = codebase_map or {}
+        self.map_lock      = threading.Lock()
 
     def on_modified(self, event):
         if event.is_directory:
@@ -182,6 +195,7 @@ class ChangeHandler(FileSystemEventHandler):
         rel_path = os.path.relpath(path, self.project_path)
 
         log.info(f"Change detected: {rel_path}")
+        print(f"💾 Change detected: {rel_path}")
 
         # Update local state
         self.state[path] = {
@@ -191,6 +205,14 @@ class ChangeHandler(FileSystemEventHandler):
         }
         save_state(self.state)
 
+        # Get codebase context for connected files
+        with self.map_lock:
+            codebase_map = self.codebase_map
+        connected_files  = get_connected_files(codebase_map, rel_path)
+        codebase_context = read_connected_content(self.project_path, connected_files)
+        if connected_files:
+            print(f"🔗 Connected files: {[c['file'] for c in connected_files]}")
+
         # Push to sync server
         server_response = push_change(self.config, rel_path, content)
 
@@ -198,11 +220,11 @@ class ChangeHandler(FileSystemEventHandler):
         if server_response and server_response.get("conflict"):
             partner_change = server_response["conflict"]
             log.info(f"Conflict found with {partner_change['developer']} on {rel_path}")
-            self._resolve(rel_path, content, partner_change)
+            self._resolve(rel_path, content, partner_change, codebase_context)
         else:
             log.info(f"Change pushed, no conflict yet: {rel_path}")
 
-    def _resolve(self, rel_path: str, my_content: str, partner_change: dict):
+    def _resolve(self, rel_path: str, my_content: str, partner_change: dict, codebase_context: str = ""):
         """Run the agent to resolve a conflict."""
         dev_a = {
             "developer": self.config["developer_name"],
@@ -219,7 +241,7 @@ class ChangeHandler(FileSystemEventHandler):
 
         log.info(f"Running agent for conflict on {rel_path}...")
         try:
-            result = run_agent(dev_a, dev_b)
+            result = run_agent(dev_a, dev_b, codebase_context)
             log.info(f"Agent resolved conflict on {rel_path} (confidence: {result.get('confidence')})")
 
             # Write merged code back to disk
@@ -259,12 +281,41 @@ class PartnerPoller(threading.Thread):
                     if os.path.exists(full_path):
                         my_content = read_file(full_path)
                         log.info(f"Partner change detected: {change['developer']} → {change['file']}")
-                        self.handler._resolve(change["file"], my_content, change)
+                        with self.handler.map_lock:
+                            codebase_map = self.handler.codebase_map
+                        connected_files  = get_connected_files(codebase_map, change["file"])
+                        codebase_context = read_connected_content(self.handler.project_path, connected_files)
+                        self.handler._resolve(change["file"], my_content, change, codebase_context)
 
             except Exception as e:
                 log.warning(f"Partner poll error: {e}")
 
             time.sleep(SYNC_INTERVAL)
+
+
+# ── Map rebuilder ─────────────────────────────────────────────────────────────
+
+class MapRebuilder(threading.Thread):
+    """Rebuilds the codebase map every 30 minutes in the background."""
+
+    def __init__(self, handler: ChangeHandler, project_path: str):
+        super().__init__(daemon=True)
+        self.handler      = handler
+        self.project_path = project_path
+
+    def run(self):
+        while True:
+            time.sleep(30 * 60)
+            try:
+                log.info("Rebuilding codebase map...")
+                new_map = build_map(self.project_path)
+                save_map(self.project_path, new_map)
+                with self.handler.map_lock:
+                    self.handler.codebase_map = new_map
+                print(f"🗺️  Map rebuilt: {new_map['file_count']} files, {len(new_map['connections'])} connections")
+                log.info(f"Map rebuilt: {new_map['file_count']} files")
+            except Exception as e:
+                log.warning(f"Map rebuild failed: {e}")
 
 
 # ── Main daemon ───────────────────────────────────────────────────────────────
@@ -278,16 +329,33 @@ def run_daemon():
     log.info(f"Watching:  {project_path}")
     log.info(f"Room:      {config['room_id']}")
 
-    handler  = ChangeHandler(config, project_path)
+    print(f"🤖 Collab Agent starting...")
+    print(f"✅ Collab Agent started")
+    print(f"   Developer : {config['developer_name']}")
+    print(f"   Watching  : {project_path}")
+    print(f"   Room      : {config['room_id']}")
+    print(f"   Server    : {config['server_url']}")
+
+    # Build codebase map on startup
+    print(f"🗺️  Building codebase map...")
+    codebase_map = build_map(project_path)
+    save_map(project_path, codebase_map)
+    print(f"   ✅ Mapped {codebase_map['file_count']} files, {len(codebase_map['connections'])} connections")
+    log.info(f"Codebase map built: {codebase_map['file_count']} files")
+
+    handler  = ChangeHandler(config, project_path, codebase_map)
     observer = Observer()
     observer.schedule(handler, project_path, recursive=True)
     observer.start()
 
-    # Start partner poller
-    poller = PartnerPoller(config, handler)
+    # Start partner poller and map rebuilder
+    poller   = PartnerPoller(config, handler)
+    rebuilder = MapRebuilder(handler, project_path)
     poller.start()
+    rebuilder.start()
 
     log.info("Watching for changes... (running silently in background)")
+    print(f"👁  Watching for changes... (Ctrl-C to stop)\n")
 
     try:
         while True:

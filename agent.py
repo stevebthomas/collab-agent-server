@@ -2,6 +2,7 @@ import os
 import json
 from datetime import datetime
 from anthropic import Anthropic
+from mapper import get_connected_files, read_connected_content, build_map, save_map, load_map, should_rebuild
 
 client = Anthropic()
 LOG_FILE = "agent_log.md"
@@ -37,7 +38,7 @@ def append_to_log(entry: str):
         f.write(entry + "\n\n")
 
 
-def analyze_and_resolve(dev_a: dict, dev_b: dict) -> dict:
+def analyze_and_resolve(dev_a: dict, dev_b: dict, codebase_context: str = "") -> dict:
     """
     Core agent function. Takes two developer pushes and returns
     a conflict analysis + resolution.
@@ -68,6 +69,9 @@ PREVIOUS CHANGE LOG:
 ACCUMULATED MEMORY & PATTERNS:
 {json.dumps(memory, indent=2)}
 
+CONNECTED FILES IN CODEBASE:
+{codebase_context if codebase_context else "No connected file context available."}
+
 Respond ONLY in this exact JSON format, no markdown, no extra text:
 {{
   "conflict_detected": true or false,
@@ -79,7 +83,8 @@ Respond ONLY in this exact JSON format, no markdown, no extra text:
   "affected_file": "which file this applies to",
   "ownership_update": {{"system_name": "developer_name"}},
   "new_pattern": "any pattern you noticed worth remembering, or null",
-  "confidence": "high, medium, or low"
+  "confidence": "high, medium, or low",
+  "cross_file_risks": "comma-separated list of other files that may be affected by this change, or null"
 }}"""
 
     user_message = f"""Two developers just pushed changes. Analyze and resolve.
@@ -166,15 +171,18 @@ def format_log_entry(dev_a: dict, dev_b: dict, result: dict) -> str:
         for system, owner in result["ownership_update"].items():
             entry += f"\n### Ownership Update\n`{system}` → **{owner}**\n"
 
+    if result.get("cross_file_risks"):
+        entry += f"\n### Cross-file Risks\n{result['cross_file_risks']}\n"
+
     return entry
 
 
-def run_agent(dev_a: dict, dev_b: dict):
+def run_agent(dev_a: dict, dev_b: dict, codebase_context: str = ""):
     """Main entry point. Run the agent on two pushes."""
     print(f"\n🤖 Agent running...")
     print(f"   Analyzing push from {dev_a['developer']} and {dev_b['developer']}...")
 
-    result = analyze_and_resolve(dev_a, dev_b)
+    result = analyze_and_resolve(dev_a, dev_b, codebase_context)
 
     log_entry = format_log_entry(dev_a, dev_b, result)
     append_to_log(log_entry)
