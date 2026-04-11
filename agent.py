@@ -1,5 +1,6 @@
 import os
 import json
+import requests
 from datetime import datetime
 from anthropic import Anthropic
 from mapper import get_connected_files, read_connected_content, build_map, save_map, load_map, should_rebuild
@@ -38,7 +39,16 @@ def append_to_log(entry: str):
         f.write(entry + "\n\n")
 
 
-def analyze_and_resolve(dev_a: dict, dev_b: dict, codebase_context: str = "") -> dict:
+def fetch_intent_registry(server_url: str, room_id: str) -> dict:
+    """Fetch the full intent registry from the sync server."""
+    try:
+        r = requests.get(f"{server_url}/intent/registry", params={"room_id": room_id}, timeout=5)
+        return r.json() if r.ok else {}
+    except Exception:
+        return {}
+
+
+def analyze_and_resolve(dev_a: dict, dev_b: dict, codebase_context: str = "", config: dict = None) -> dict:
     """
     Core agent function. Takes two developer pushes and returns
     a conflict analysis + resolution.
@@ -52,6 +62,13 @@ def analyze_and_resolve(dev_a: dict, dev_b: dict, codebase_context: str = "") ->
 
     log_history = read_log()
     memory = read_memory()
+
+    intent_registry = {}
+    if config:
+        intent_registry = fetch_intent_registry(
+            config.get("server_url", ""),
+            config.get("room_id", "")
+        )
 
     system_prompt = f"""You are a collaborative coding agent for a small game development team (3-4 developers).
 Your job is to:
@@ -71,6 +88,9 @@ ACCUMULATED MEMORY & PATTERNS:
 
 CONNECTED FILES IN CODEBASE:
 {codebase_context if codebase_context else "No connected file context available."}
+
+PROJECT INTENT REGISTRY — what every file is for:
+{json.dumps(intent_registry, indent=2) if intent_registry else "No registry data available."}
 
 Respond ONLY in this exact JSON format, no markdown, no extra text:
 {{
@@ -177,12 +197,12 @@ def format_log_entry(dev_a: dict, dev_b: dict, result: dict) -> str:
     return entry
 
 
-def run_agent(dev_a: dict, dev_b: dict, codebase_context: str = ""):
+def run_agent(dev_a: dict, dev_b: dict, codebase_context: str = "", config: dict = None):
     """Main entry point. Run the agent on two pushes."""
     print(f"\n🐀 Remi running...")
     print(f"   Analyzing push from {dev_a['developer']} and {dev_b['developer']}...")
 
-    result = analyze_and_resolve(dev_a, dev_b, codebase_context)
+    result = analyze_and_resolve(dev_a, dev_b, codebase_context, config=config)
 
     log_entry = format_log_entry(dev_a, dev_b, result)
     append_to_log(log_entry)

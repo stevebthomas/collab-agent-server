@@ -41,6 +41,16 @@ def init_db():
                 UNIQUE(room_id, file_path, developer)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS intent_registry (
+                room_id        TEXT NOT NULL,
+                developer      TEXT NOT NULL,
+                file_path      TEXT NOT NULL,
+                intent         TEXT NOT NULL,
+                timestamp_unix REAL NOT NULL,
+                UNIQUE(room_id, file_path) ON CONFLICT REPLACE
+            )
+        """)
         conn.commit()
 
 
@@ -168,6 +178,87 @@ def resolve():
     return jsonify({"status": "resolved"})
 
 
+@app.route("/intent/update", methods=["POST"])
+def intent_update():
+    """Upsert a file's intent into the registry."""
+    data      = request.json
+    room_id   = data.get("room_id")
+    developer = data.get("developer")
+    file_path = data.get("file_path")
+    intent    = data.get("intent")
+
+    if not all([room_id, developer, file_path, intent]):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    with store_lock:
+        with get_db() as conn:
+            conn.execute("""
+                INSERT INTO intent_registry (room_id, developer, file_path, intent, timestamp_unix)
+                VALUES (?, ?, ?, ?, ?)
+            """, (room_id, developer, file_path, intent, datetime.now().timestamp()))
+            conn.commit()
+
+    return jsonify({"status": "ok"})
+
+
+@app.route("/intent/registry", methods=["GET"])
+def intent_registry():
+    """Return the full intent map for a room."""
+    room_id = request.args.get("room_id")
+    if not room_id:
+        return jsonify({"error": "Missing room_id"}), 400
+
+    with store_lock:
+        with get_db() as conn:
+            rows = conn.execute("""
+                SELECT file_path, intent, developer, timestamp_unix
+                FROM intent_registry
+                WHERE room_id = ?
+                ORDER BY timestamp_unix ASC
+            """, (room_id,)).fetchall()
+
+    result = {}
+    for row in rows:
+        result[row["file_path"]] = {
+            "intent":    row["intent"],
+            "developer": row["developer"],
+            "updated":   datetime.fromtimestamp(row["timestamp_unix"]).isoformat()
+        }
+
+    return jsonify(result)
+
+
+@app.route("/intent/check", methods=["GET"])
+def intent_check():
+    """Return files whose intent semantically overlaps with a prompt (keyword match)."""
+    room_id = request.args.get("room_id")
+    prompt  = request.args.get("prompt", "")
+
+    if not room_id or not prompt:
+        return jsonify({"error": "Missing room_id or prompt"}), 400
+
+    words = [w.lower() for w in prompt.split() if len(w) > 2]
+
+    with store_lock:
+        with get_db() as conn:
+            rows = conn.execute("""
+                SELECT file_path, intent, developer, timestamp_unix
+                FROM intent_registry
+                WHERE room_id = ?
+            """, (room_id,)).fetchall()
+
+    matches = {}
+    for row in rows:
+        if any(word in row["intent"].lower() for word in words):
+            matches[row["file_path"]] = {
+                "intent":    row["intent"],
+                "developer": row["developer"],
+                "updated":   datetime.fromtimestamp(row["timestamp_unix"]).isoformat()
+            }
+
+    return jsonify({"matches": matches, "query": prompt})
+
+
 @app.route("/status", methods=["GET"])
 def status():
     """Health check + room status."""
@@ -193,7 +284,8 @@ def index():
         "service":   "Collab Agent Sync Server",
         "version":   "2.0.0",
         "storage":   "SQLite (persistent)",
-        "endpoints": ["/push", "/poll", "/resolve", "/status"]
+        "endpoints": ["/push", "/poll", "/resolve", "/status",
+                      "/intent/update", "/intent/registry", "/intent/check"]
     })
 
 

@@ -100,7 +100,7 @@ def notify_mac(developer: str, file_path: str):
     if shutil.which("terminal-notifier") and os.path.exists(icon):
         os.system(
             f'terminal-notifier -title "{title}" -message "{message}" '
-            f'-contentImage "{icon}" -sound default'
+            f'-contentImage "{icon}" -sound default -timeout 20'
         )
     else:
         os.system(f'osascript -e \'display notification "{message}" with title "{title}"\'')
@@ -144,6 +144,25 @@ def push_change(config: dict, file_path: str, content: str, intent: str = ""):
     except Exception as e:
         log.warning(f"Could not push to server: {e}")
         return None
+
+
+def push_intent(config: dict, file_path: str, intent: str):
+    """Push a file's intent to the registry on the sync server."""
+    if not intent:
+        return
+    try:
+        server = config["server_url"]
+        payload = {
+            "room_id":   config["room_id"],
+            "developer": config["developer_name"],
+            "file_path": file_path,
+            "intent":    intent
+        }
+        r = requests.post(f"{server}/intent/update", json=payload, timeout=5)
+        if r.ok:
+            log.info(f"Intent pushed for {file_path}: {intent}")
+    except Exception as e:
+        log.warning(f"Could not push intent: {e}")
 
 
 def poll_partner_changes(config: dict) -> list:
@@ -216,6 +235,14 @@ class ChangeHandler(FileSystemEventHandler):
         log.info(f"Change detected: {rel_path}")
         print(f"💾 Remi: Change detected: {rel_path}")
 
+        # Capture intent from the developer
+        try:
+            intent = input(f"📝 What does {rel_path} do? (Enter to skip): ").strip()
+        except (EOFError, OSError):
+            intent = ""
+        if intent:
+            push_intent(self.config, rel_path, intent)
+
         # Update local state
         self.state[path] = {
             "hash":      new_hash,
@@ -260,7 +287,7 @@ class ChangeHandler(FileSystemEventHandler):
 
         log.info(f"Running agent for conflict on {rel_path}...")
         try:
-            result = run_agent(dev_a, dev_b, codebase_context)
+            result = run_agent(dev_a, dev_b, codebase_context, config=self.config)
             log.info(f"Agent resolved conflict on {rel_path} (confidence: {result.get('confidence')})")
 
             # Write merged code back to disk
