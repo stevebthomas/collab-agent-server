@@ -137,7 +137,11 @@ def poll():
                 ORDER BY timestamp_unix ASC
             """, (room_id, developer)).fetchall()
 
-    changes = [dict(row) for row in rows]
+    changes = []
+    for row in rows:
+        d = dict(row)
+        d["file"] = d["file_path"]   # alias so watcher.py can use change['file']
+        changes.append(d)
     return jsonify({"changes": changes})
 
 
