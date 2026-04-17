@@ -139,13 +139,16 @@ def poll():
     if not room_id or not developer:
         return jsonify({"error": "Missing room or developer"}), 400
 
+    ttl_hours = float(request.args.get("ttl_hours", 24))
+    cutoff    = datetime.now().timestamp() - (ttl_hours * 3600)
+
     with store_lock:
         with get_db() as conn:
             rows = conn.execute("""
                 SELECT * FROM changes
-                WHERE room_id = ? AND developer != ?
+                WHERE room_id = ? AND developer != ? AND timestamp_unix > ?
                 ORDER BY timestamp_unix ASC
-            """, (room_id, developer)).fetchall()
+            """, (room_id, developer, cutoff)).fetchall()
 
     changes = []
     for row in rows:

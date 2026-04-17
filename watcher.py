@@ -231,7 +231,11 @@ def push_intent(config: dict, file_path: str, intent: str) -> bool:
 def poll_partner_changes(config: dict) -> list:
     """Poll server for any changes from partner developers."""
     try:
-        params = {"room": config["room_id"], "developer": config["developer_name"]}
+        params = {
+            "room":      config["room_id"],
+            "developer": config["developer_name"],
+            "ttl_hours": config.get("change_ttl_hours", 24)
+        }
         r = requests.get(f"{config['server_url']}/poll", params=params, timeout=5)
         return r.json().get("changes", []) if r.ok else []
     except Exception as e:
@@ -347,8 +351,16 @@ class ChangeHandler(FileSystemEventHandler):
 
         log.info(f"Running agent for conflict on {rel_path}...")
         try:
-            result    = run_agent(dev_a, dev_b, codebase_context, config=self.config)
-            full_path = os.path.join(self.project_path, rel_path)
+            # Save a backup of the current file before overwriting
+            full_path  = os.path.join(self.project_path, rel_path)
+            backup_dir = Path(self.project_path) / ".remi" / "backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_name = (datetime.now().strftime("%Y%m%d_%H%M%S") + "_"
+                           + rel_path.replace("/", "_").replace("\\", "_"))
+            (backup_dir / backup_name).write_text(my_content, encoding="utf-8")
+            log.info(f"Backup saved: .remi/backups/{backup_name}")
+
+            result = run_agent(dev_a, dev_b, codebase_context, config=self.config)
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(result["merged_code"])
 

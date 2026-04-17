@@ -80,11 +80,12 @@ def cmd_init():
     # Create .remi/ and write config
     remi_dir.mkdir()
     project_config = {
-        "project_name":  project_name,
-        "room_id":       room_id,
-        "server_url":    SERVER_URL,
-        "developer_name": developer_name,
-        "api_key_path":  str(GLOBAL_CONFIG_DIR / ".api_key")
+        "project_name":     project_name,
+        "room_id":          room_id,
+        "server_url":       SERVER_URL,
+        "developer_name":   developer_name,
+        "api_key_path":     str(GLOBAL_CONFIG_DIR / ".api_key"),
+        "change_ttl_hours": 24
     }
     with open(remi_dir / "config.json", "w") as f:
         json.dump(project_config, f, indent=2)
@@ -196,6 +197,49 @@ def cmd_registry():
     print(f"Total: {len(registry)} file(s)\n")
 
 
+def cmd_rollback():
+    """Restore a file to its pre-merge backup."""
+    backup_dir = Path.cwd() / ".remi" / "backups"
+
+    if not backup_dir.exists() or not any(backup_dir.iterdir()):
+        print("No backups found for this project.")
+        return
+
+    backups = sorted(backup_dir.iterdir(), key=lambda p: p.name, reverse=True)
+    target  = sys.argv[2] if len(sys.argv) > 2 else None
+
+    if target:
+        target_slug = target.replace("/", "_").replace("\\", "_")
+        matching    = [b for b in backups if b.name.endswith(target_slug)]
+        if not matching:
+            print(f"No backups found for {target}")
+            return
+        backup = matching[0]
+        dest   = Path.cwd() / target
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(backup.read_text(encoding="utf-8"), encoding="utf-8")
+        print(f"✅ Restored {target} from backup {backup.name[:15]}")
+    else:
+        print(f"\n🗂  Backups — {Path.cwd().name}")
+        print(f"{'─' * 65}")
+        print(f"{'Time':<17} {'File'}")
+        print(f"{'─' * 65}")
+        for b in backups[:20]:
+            parts = b.name.split("_", 2)
+            if len(parts) == 3:
+                try:
+                    dt       = datetime.strptime(f"{parts[0]}_{parts[1]}", "%Y%m%d_%H%M%S")
+                    time_str = dt.strftime("%m/%d %H:%M:%S")
+                except Exception:
+                    time_str = f"{parts[0]}_{parts[1]}"
+                print(f"{time_str:<17} {parts[2]}")
+            else:
+                print(f"{'':17} {b.name}")
+        print(f"{'─' * 65}")
+        print(f"\nTo restore: remi rollback <file>")
+        print(f"Example:    remi rollback game/player.js\n")
+
+
 def cmd_stop():
     cwd      = Path.cwd()
     projects = load_projects()
@@ -217,12 +261,14 @@ def cmd_help():
 🐀 Remi — silent collaborative coding agent
 
 Commands:
-  remi init      Initialise Remi in the current project folder
-  remi status    Show all watched projects and their status
-  remi log       Print the last 20 conflict log entries for this project
-  remi registry  Show the intent registry for this project
-  remi stop      Stop watching the current project
-  remi help      Show this help message
+  remi init              Initialise Remi in the current project folder
+  remi status            Show all watched projects and their status
+  remi log               Print the last 20 conflict log entries for this project
+  remi registry          Show the intent registry for this project
+  remi rollback          List pre-merge backups for this project
+  remi rollback <file>   Restore a file to its pre-merge state
+  remi stop              Stop watching the current project
+  remi help              Show this help message
 """)
 
 
@@ -231,6 +277,7 @@ COMMANDS = {
     "status":   cmd_status,
     "log":      cmd_log,
     "registry": cmd_registry,
+    "rollback": cmd_rollback,
     "stop":     cmd_stop,
     "help":     cmd_help,
 }
