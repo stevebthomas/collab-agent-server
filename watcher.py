@@ -42,7 +42,7 @@ IGNORED_DIRS     = {
     ".git", "__pycache__", "node_modules", ".venv", "venv",
     ".idea", ".vscode", ".remi"
 }
-WATCHED_EXTS = {".py", ".js", ".ts", ".cs", ".json", ".yaml", ".yml"}
+WATCHED_EXTS = {".py", ".js", ".ts", ".cs", ".json", ".yaml", ".yml", ".md", ".lua"}
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
