@@ -280,6 +280,7 @@ class ChangeHandler(FileSystemEventHandler):
         self.lock         = threading.Lock()
         self.codebase_map = codebase_map or {}
         self.map_lock     = threading.Lock()
+        self._mtime_cache = {}  # path -> last mtime; drops xattr-only events before SHA256
 
     def _load_state(self) -> dict:
         if not self.state_path.exists():
@@ -297,10 +298,26 @@ class ChangeHandler(FileSystemEventHandler):
 
     def on_modified(self, event):
         if not event.is_directory and should_watch(event.src_path):
+            try:
+                mtime = os.stat(event.src_path).st_mtime
+            except OSError:
+                mtime = None
+            last_mtime = self._mtime_cache.get(event.src_path)
+            if mtime is not None and mtime == last_mtime:
+                log.debug(
+                    f"Skipping {event.src_path} — mtime unchanged (xattr/metadata-only event)"
+                )
+                return
+            if mtime is not None:
+                self._mtime_cache[event.src_path] = mtime
             self._schedule(event.src_path)
 
     def on_created(self, event):
         if not event.is_directory and should_watch(event.src_path):
+            try:
+                self._mtime_cache[event.src_path] = os.stat(event.src_path).st_mtime
+            except OSError:
+                pass
             self._schedule(event.src_path)
 
     def _schedule(self, path: str):
@@ -356,12 +373,20 @@ class ChangeHandler(FileSystemEventHandler):
         if connected_files:
             print(f"🔗 Connected files: {[c['file'] for c in connected_files]}")
 
+        # Optimistically cache hash before push so concurrent iCloud sync passes
+        # arriving during the server round-trip are suppressed by the SHA256 check
+        with _hash_cache_lock:
+            _cache = load_hash_cache()
+            _cache[path] = new_hash
+            save_hash_cache(_cache)
+
         server_response = push_change(self.config, rel_path, content)
 
-        if server_response is not None:
+        if server_response is None:
+            # Push failed — evict optimistic hash so the next event retries
             with _hash_cache_lock:
                 _cache = load_hash_cache()
-                _cache[path] = new_hash
+                _cache.pop(path, None)
                 save_hash_cache(_cache)
 
         if server_response and server_response.get("conflict"):
