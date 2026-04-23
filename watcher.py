@@ -33,6 +33,7 @@ from mapper import get_connected_files, read_connected_content, build_map, save_
 # ── Global paths ──────────────────────────────────────────────────────────────
 GLOBAL_CONFIG_DIR  = Path.home() / ".collab-agent"
 GLOBAL_CONFIG_PATH = GLOBAL_CONFIG_DIR / "config.json"
+HASH_CACHE_PATH    = GLOBAL_CONFIG_DIR / "hashes.json"
 PROJECTS_PATH      = GLOBAL_CONFIG_DIR / "projects.json"
 LOG_PATH           = GLOBAL_CONFIG_DIR / "daemon.log"
 
@@ -43,6 +44,8 @@ IGNORED_DIRS     = {
     ".idea", ".vscode", ".remi"
 }
 WATCHED_EXTS = {".py", ".js", ".ts", ".cs", ".json", ".yaml", ".yml", ".md", ".lua"}
+
+_hash_cache_lock = threading.Lock()
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -121,12 +124,28 @@ def load_all_project_configs() -> list:
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 
-def file_hash(path: str) -> str:
+def sha256_hash(path: str) -> str:
     try:
         with open(path, "rb") as f:
-            return hashlib.md5(f.read()).hexdigest()
+            return hashlib.sha256(f.read()).hexdigest()
     except Exception:
         return ""
+
+
+def load_hash_cache() -> dict:
+    try:
+        if HASH_CACHE_PATH.exists():
+            with open(HASH_CACHE_PATH) as f:
+                return json.load(f)
+    except Exception:
+        log.warning("Hash cache missing or corrupt — rebuilding from empty")
+    return {}
+
+
+def save_hash_cache(cache: dict):
+    HASH_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(HASH_CACHE_PATH, "w") as f:
+        json.dump(cache, f, indent=2)
 
 
 def read_file(path: str) -> str:
@@ -173,19 +192,25 @@ def should_watch(path: str) -> bool:
 def write_update(project_path: str, emoji: str, developer: str, file_path: str, message: str):
     """Append a 2-line entry to remi_updates.md, with a date header if needed."""
     updates_path = Path(project_path) / "remi_updates.md"
-    now          = datetime.now()
-    today_header = f"## {now.strftime('%A, %B %-d')}"
-    time_str     = now.strftime("%H:%M")
+    try:
+        now          = datetime.now()
+        today_header = f"## {now.strftime('%A, %B %-d')}"
+        time_str     = now.strftime("%H:%M")
 
-    existing = updates_path.read_text() if updates_path.exists() else ""
+        existing = updates_path.read_text() if updates_path.exists() else ""
 
-    with open(updates_path, "a") as f:
-        if today_header not in existing:
-            if existing and not existing.endswith("\n\n"):
-                f.write("\n\n")
-            f.write(f"{today_header}\n\n")
-        f.write(f"{emoji} {time_str}  {developer}  {file_path}\n")
-        f.write(f"          {message}\n\n")
+        with open(updates_path, "a") as f:
+            if today_header not in existing:
+                if existing and not existing.endswith("\n\n"):
+                    f.write("\n\n")
+                f.write(f"{today_header}\n\n")
+            f.write(f"{emoji} {time_str}  {developer}  {file_path}\n")
+            f.write(f"          {message}\n\n")
+    except OSError as e:
+        log.warning(
+            f"write_update failed for {updates_path}: {e} — "
+            f"if permission denied, try: xattr -d com.apple.macl {updates_path}"
+        )
 
 
 # ── Server sync ───────────────────────────────────────────────────────────────
@@ -290,9 +315,14 @@ class ChangeHandler(FileSystemEventHandler):
         with self.lock:
             self.pending.pop(path, None)
 
-        new_hash = file_hash(path)
-        old_hash = self.state.get(path, {}).get("hash", "")
-        if new_hash == old_hash:
+        new_hash = sha256_hash(path)
+
+        with _hash_cache_lock:
+            _cache = load_hash_cache()
+            cached_hash = _cache.get(path, "")
+
+        if new_hash == cached_hash:
+            log.debug(f"Skipping {path} — content unchanged (SHA256 match)")
             return
 
         content  = read_file(path)
@@ -327,6 +357,12 @@ class ChangeHandler(FileSystemEventHandler):
             print(f"🔗 Connected files: {[c['file'] for c in connected_files]}")
 
         server_response = push_change(self.config, rel_path, content)
+
+        if server_response is not None:
+            with _hash_cache_lock:
+                _cache = load_hash_cache()
+                _cache[path] = new_hash
+                save_hash_cache(_cache)
 
         if server_response and server_response.get("conflict"):
             partner_change = server_response["conflict"]
@@ -364,6 +400,17 @@ class ChangeHandler(FileSystemEventHandler):
             with open(full_path, "w", encoding="utf-8") as f:
                 f.write(result["merged_code"])
 
+            # Cache merged content hash so the resulting write event is suppressed
+            merged_hash = sha256_hash(full_path)
+            with _hash_cache_lock:
+                _cache = load_hash_cache()
+                _cache[full_path] = merged_hash
+                save_hash_cache(_cache)
+
+            if result.get("no_op"):
+                log.info(f"No-op sync: {rel_path} — identical content, agent skipped")
+                return
+
             confidence = result.get("confidence", "?")
             log.info(f"Merged code written to {rel_path} (confidence: {confidence})")
             notify_mac("✅ Conflict resolved", f"Agent merged changes to {rel_path}")
@@ -386,6 +433,7 @@ class PartnerPoller(threading.Thread):
         super().__init__(daemon=True)
         self.config      = config
         self.handler     = handler
+        self.last_alive  = time.time()  # heartbeat timestamp
         self.seen        = set()
         self.known_files = set()
 
@@ -466,6 +514,7 @@ class PartnerPoller(threading.Thread):
             except Exception as e:
                 log.warning(f"Partner poll error: {e}")
 
+            self.last_alive = time.time()
             time.sleep(SYNC_INTERVAL)
 
 
@@ -492,6 +541,28 @@ class MapRebuilder(threading.Thread):
 
 
 # ── Main daemon ───────────────────────────────────────────────────────────────
+
+def rebuild_hashes(configs: list):
+    """Walk watched files in all projects and populate hash cache without triggering events."""
+    print("🔨 Rebuilding hash cache...")
+    cache = {}
+    for config in configs:
+        project_path = config["project_path"]
+        name = config.get("project_name", Path(project_path).name)
+        count = 0
+        for root, dirs, files in os.walk(project_path):
+            dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
+            for fname in files:
+                fpath = os.path.join(root, fname)
+                if should_watch(fpath):
+                    h = sha256_hash(fpath)
+                    if h:
+                        cache[fpath] = h
+                        count += 1
+        print(f"   [{name}] Hashed {count} files")
+    save_hash_cache(cache)
+    print(f"✅ Hash cache written to {HASH_CACHE_PATH}")
+
 
 def run_daemon():
     configs = load_all_project_configs()
@@ -526,27 +597,50 @@ def run_daemon():
         observer.schedule(handler, project_path, recursive=True)
         observer.start()
 
-        PartnerPoller(config, handler).start()
+        poller = PartnerPoller(config, handler)
+        poller.start()
         MapRebuilder(handler, project_path).start()
 
-        observers.append(observer)
+        observers.append((observer, config, handler, poller))
 
     print(f"\n✅ Remi is awake — watching {len(configs)} project(s)")
     log.info(f"Remi started — watching {len(configs)} project(s)")
     print(f"👁  Watching for changes... (Ctrl-C to stop)\n")
 
+    HEARTBEAT_TIMEOUT = 5 * 60  # restart poller if silent for 5 minutes
+
     try:
         while True:
-            time.sleep(1)
+            time.sleep(30)
+            for i, (observer, config, handler, poller) in enumerate(observers):
+                if not poller.is_alive() or (time.time() - poller.last_alive) > HEARTBEAT_TIMEOUT:
+                    name = config.get("project_name", "unknown")
+                    log.warning(f"PartnerPoller for {name} is stale — restarting")
+                    print(f"⚠️  Remi: restarting stalled poller for {name}")
+                    new_poller = PartnerPoller(config, handler)
+                    new_poller.start()
+                    observers[i] = (observer, config, handler, new_poller)
     except KeyboardInterrupt:
-        for observer in observers:
+        for observer, _, _, _ in observers:
             observer.stop()
         log.info("Remi is going to sleep")
         print("🐀 Remi is going to sleep")
 
-    for observer in observers:
+    for observer, _, _, _ in observers:
         observer.join()
 
 
 if __name__ == "__main__":
-    run_daemon()
+    import argparse
+    parser = argparse.ArgumentParser(description="Remi file watcher daemon")
+    parser.add_argument(
+        "--rebuild-hashes", action="store_true",
+        help="Populate hash cache from current project files without triggering events"
+    )
+    args = parser.parse_args()
+
+    if args.rebuild_hashes:
+        configs = load_all_project_configs()
+        rebuild_hashes(configs)
+    else:
+        run_daemon()

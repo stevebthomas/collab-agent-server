@@ -227,11 +227,35 @@ def format_log_entry(dev_a: dict, dev_b: dict, result: dict) -> str:
 
 def run_agent(dev_a: dict, dev_b: dict, codebase_context: str = "", config: dict = None):
     """Main entry point. Run the agent on two pushes."""
+    project_path = config.get("project_path", ".") if config else "."
+
+    # Defense-in-depth: skip Opus entirely when both payloads are byte-identical
+    if dev_a.get("code", "") == dev_b.get("code", ""):
+        filename = dev_a.get("file", "unknown")
+        append_to_log(
+            f"✅ No-op sync: {filename} (identical content from both devs, skipped inference)",
+            project_path
+        )
+        print(f"⏭️  Remi: no-op sync — {filename} identical content, skipping inference")
+        return {
+            "no_op":                True,
+            "conflict_detected":    False,
+            "conflict_description": "Identical content from both developers — no merge needed.",
+            "developer_a_intent":   dev_a.get("intent", ""),
+            "developer_b_intent":   dev_b.get("intent", ""),
+            "resolution":           "No-op: content was identical.",
+            "merged_code":          dev_a["code"],
+            "affected_file":        dev_a.get("file", ""),
+            "ownership_update":     {},
+            "new_pattern":          None,
+            "confidence":           "high",
+            "cross_file_risks":     None,
+        }
+
     print(f"\n🐀 Remi running...")
     print(f"   Analyzing push from {dev_a['developer']} and {dev_b['developer']}...")
 
-    result       = analyze_and_resolve(dev_a, dev_b, codebase_context, config=config)
-    project_path = config.get("project_path", ".") if config else "."
+    result = analyze_and_resolve(dev_a, dev_b, codebase_context, config=config)
 
     log_entry = format_log_entry(dev_a, dev_b, result)
     append_to_log(log_entry, project_path)
