@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Remi — Multi-project collaborative coding agent
+Remi: Multi-project collaborative coding agent
 Usage: remi <command>
 
 Commands:
@@ -60,7 +60,7 @@ def cmd_init():
 
     print(f"\n🐀 Initialising Remi in {cwd.name}\n")
 
-    # Developer name — reuse global if set
+    # Developer name: reuse global if set
     default_dev    = global_config.get("developer_name", "")
     if default_dev:
         developer_name = default_dev
@@ -115,7 +115,7 @@ def cmd_init():
 
     print(f"""
 ✓ Remi initialised in {project_name}
-  Room ID: {room_id} — share this with your team
+  Room ID: {room_id}, share this with your team
   Watching: {cwd}
   Run 'remi status' to check everything is working
 """)
@@ -134,7 +134,7 @@ def cmd_status():
     for path, info in projects.items():
         status     = "● active" if info.get("active") else "○ stopped"
         name       = info.get("name", Path(path).name)
-        room       = info.get("room_id", "—")
+        room       = info.get("room_id", "unknown")
         short_path = path.replace(str(Path.home()), "~")
         print(f"{name:<25} {room:<22} {status:<10} {short_path}")
 
@@ -177,7 +177,7 @@ def cmd_registry():
         print("📭 Intent registry is empty.")
         return
 
-    print(f"\n📋 Intent Registry — {config.get('project_name', config['room_id'])}")
+    print(f"\n📋 Intent Registry: {config.get('project_name', config['room_id'])}")
     print(f"{'─' * 90}")
     print(f"{'File':<35} {'Owner':<12} {'Intent':<30} {'Updated'}")
     print(f"{'─' * 90}")
@@ -220,7 +220,7 @@ def cmd_rollback():
         dest.write_text(backup.read_text(encoding="utf-8"), encoding="utf-8")
         print(f"✅ Restored {target} from backup {backup.name[:15]}")
     else:
-        print(f"\n🗂  Backups — {Path.cwd().name}")
+        print(f"\n🗂  Backups: {Path.cwd().name}")
         print(f"{'─' * 65}")
         print(f"{'Time':<17} {'File'}")
         print(f"{'─' * 65}")
@@ -258,7 +258,7 @@ def cmd_stop():
 
 def cmd_help():
     print("""
-🐀 Remi — silent collaborative coding agent
+🐀 Remi: silent collaborative coding agent
 
 Commands:
   remi init              Initialise Remi in the current project folder

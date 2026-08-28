@@ -136,7 +136,7 @@ def build_map(project_path: str) -> dict:
             except Exception:
                 continue
 
-    # Build connection map — which files are connected to each other
+    # Build connection map: which files are connected to each other
     connections = {}
     for file_a, info_a in files_info.items():
         connected = []

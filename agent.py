@@ -1,5 +1,5 @@
 """
-Remi — Conflict Resolution Agent
+Remi: Conflict Resolution Agent
 
 Core AI layer. Receives two developers' code changes and their stated intents,
 analyzes for semantic conflicts, and produces a merged resolution using Claude Opus 4.6.
@@ -130,7 +130,7 @@ ACCUMULATED MEMORY & PATTERNS:
 CONNECTED FILES IN CODEBASE:
 {codebase_context if codebase_context else "No connected file context available."}
 
-PROJECT INTENT REGISTRY — what every file is for:
+PROJECT INTENT REGISTRY (what every file is for):
 {json.dumps(intent_registry, indent=2) if intent_registry else "No registry data available."}
 
 Respond ONLY in this exact JSON format, no markdown, no extra text:
@@ -150,7 +150,7 @@ Respond ONLY in this exact JSON format, no markdown, no extra text:
 
     user_message = f"""Two developers just pushed changes. Analyze and resolve.
 
-DEVELOPER A — {dev_a['developer']}
+DEVELOPER A: {dev_a['developer']}
 File: {dev_a['file']}
 Intent: {dev_a['intent']}
 Code:
@@ -158,7 +158,7 @@ Code:
 
 ---
 
-DEVELOPER B — {dev_b['developer']}
+DEVELOPER B: {dev_b['developer']}
 File: {dev_b['file']}
 Intent: {dev_b['intent']}
 Code:
@@ -204,14 +204,14 @@ def format_log_entry(dev_a: dict, dev_b: dict, result: dict) -> str:
 
     entry = f"""---
 
-## {conflict_emoji} Remi — {timestamp}
+## {conflict_emoji} Remi ({timestamp})
 
 **File:** `{result['affected_file']}`
 **Confidence:** {result['confidence']}
 
 ### Developers
-- **{dev_a['developer']}** — {result['developer_a_intent']}
-- **{dev_b['developer']}** — {result['developer_b_intent']}
+- **{dev_a['developer']}**: {result['developer_a_intent']}
+- **{dev_b['developer']}**: {result['developer_b_intent']}
 
 ### Conflict Detected
 {result['conflict_description']}
@@ -249,11 +249,11 @@ def run_agent(dev_a: dict, dev_b: dict, codebase_context: str = "", config: dict
             f"✅ No-op sync: {filename} (identical content from both devs, skipped inference)",
             project_path
         )
-        print(f"⏭️  Remi: no-op sync — {filename} identical content, skipping inference")
+        print(f"⏭️  Remi: no-op sync ({filename} identical content), skipping inference")
         return {
             "no_op":                True,
             "conflict_detected":    False,
-            "conflict_description": "Identical content from both developers — no merge needed.",
+            "conflict_description": "Identical content from both developers; no merge needed.",
             "developer_a_intent":   dev_a.get("intent", ""),
             "developer_b_intent":   dev_b.get("intent", ""),
             "resolution":           "No-op: content was identical.",
@@ -287,11 +287,11 @@ def run_agent(dev_a: dict, dev_b: dict, codebase_context: str = "", config: dict
 
 
 # ─────────────────────────────────────────────
-# TEST SCENARIO — the bar door sound example
+# TEST SCENARIO: the bar door sound example
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
 
-    # Developer A writes a sound trigger for the bar — but implements it too broadly
+    # Developer A writes a sound trigger for the bar, but implements it too broadly
     dev_a = {
         "developer": "Alex",
         "file": "game/buildings/doors.py",

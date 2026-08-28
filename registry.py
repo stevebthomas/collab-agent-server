@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-registry.py — Standalone intent registry viewer (legacy).
+registry.py: Standalone intent registry viewer (legacy).
 
 Note: This script's functionality is now available via `remi registry` in the CLI.
 This file is kept for reference and backwards compatibility.
@@ -42,7 +42,7 @@ def main():
         print("📭 Intent registry is empty. Make some changes and enter intent to populate it.")
         return
 
-    print(f"\n📋 Intent Registry — Room: {room_id}")
+    print(f"\n📋 Intent Registry, Room: {room_id}")
     print(f"{'─' * 90}")
     print(f"{'File':<35} {'Owner':<12} {'Intent':<30} {'Updated'}")
     print(f"{'─' * 90}")

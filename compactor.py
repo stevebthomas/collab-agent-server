@@ -1,5 +1,5 @@
 """
-Remi — Event Log Compactor
+Remi: Event Log Compactor
 
 Reduces noise in the event log before entries are written to the activity feed.
 Without compaction, a typical coding session produces 8-12 filesystem events per

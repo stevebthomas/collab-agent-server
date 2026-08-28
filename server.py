@@ -161,7 +161,7 @@ def poll():
 @app.route("/resolve", methods=["POST"])
 def resolve():
     """
-    Mark a conflict as resolved — removes both sides from the store.
+    Mark a conflict as resolved. Removes both sides from the store.
     Called by the agent after writing the merged file.
     """
     data      = request.json

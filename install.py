@@ -82,7 +82,7 @@ def get_watcher_path() -> str:
 
 
 def register_mac(config: dict):
-    """Register as a launchd service on macOS — starts automatically on login."""
+    """Register as a launchd service on macOS. Starts automatically on login."""
     watcher_path = get_watcher_path()
     api_key_path = str(CONFIG_DIR / ".api_key")
 
@@ -231,7 +231,7 @@ def print_success(config: dict):
 
   Remi is running in the background and will restart on login.
 
-  Next step — initialise a project:
+  Next step: initialise a project:
 
     cd ~/your-project
     remi init

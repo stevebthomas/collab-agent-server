@@ -2,7 +2,7 @@
 
 ## What is vibecoding?
 
-Vibecoding refers to development workflows where AI assistants (Cursor, Claude Code, GitHub Copilot, etc.) generate large chunks of code in response to high-level prompts. The developer guides the AI, accepts or rejects suggestions, and iterates — but may not deeply understand every line produced.
+Vibecoding refers to development workflows where AI assistants (Cursor, Claude Code, GitHub Copilot, etc.) generate large chunks of code in response to high-level prompts. The developer guides the AI, accepts or rejects suggestions, and iterates, but may not deeply understand every line produced.
 
 This is increasingly common. It's fast, it unlocks developers who previously couldn't build certain things, and it produces real, working software.
 
@@ -22,11 +22,11 @@ Neither developer fully understands the full scope of what their AI changed. Whe
 
 - git sees no conflict on `enemy_ai.py` (only B touched it)
 - git sees a conflict on `physics.py` (both touched it) and produces a merge
-- The merge is syntactically valid — it compiles
+- The merge is syntactically valid: it compiles
 - At runtime, the new enemy AI calls a function signature that no longer exists
 - The game crashes
 
-**The gap:** git resolved the conflict at the syntax level. Nobody resolved it at the intent level. The right resolution would have been: "B's enemy AI needs to use the new event-driven interface A built."
+**The gap:** git resolved the syntax conflict, but nobody resolved the underlying intent conflict. The right resolution would have been: "B's enemy AI needs to use the new event-driven interface A built."
 
 ## Why pre-push matters
 
@@ -35,7 +35,7 @@ Post-push is too late for intent resolution. By the time a PR is opened:
 - The developer may not remember the intent behind each change
 - The conflict has already propagated into shared history
 
-Pre-push, Remi captures intent *at the moment of generation* — when it's still fresh and accurate — and uses it to detect and resolve conflicts before they're committed.
+Pre-push, Remi captures intent *at the moment of generation* (when it's still fresh and accurate) and uses it to detect and resolve conflicts before they're committed.
 
 ## Why this is hard to solve with existing tools
 

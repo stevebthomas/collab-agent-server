@@ -1,5 +1,5 @@
 """
-Remi — Event Log
+Remi: Event Log
 
 Append-only source-of-truth log for all file change events observed by the watcher.
 Separates concerns between raw event capture and rendered output:

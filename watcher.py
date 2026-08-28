@@ -114,7 +114,7 @@ def load_all_project_configs() -> list:
                 ),
             }
 
-        # Global developer_name always wins — single source of truth
+        # Global developer_name always wins: single source of truth
         cfg["developer_name"] = developer_name
         cfg["project_path"]   = project_path
         configs.append(cfg)
@@ -138,7 +138,7 @@ def load_hash_cache() -> dict:
             with open(HASH_CACHE_PATH) as f:
                 return json.load(f)
     except Exception:
-        log.warning("Hash cache missing or corrupt — rebuilding from empty")
+        log.warning("Hash cache missing or corrupt, rebuilding from empty")
     return {}
 
 
@@ -208,8 +208,8 @@ def write_update(project_path: str, emoji: str, developer: str, file_path: str, 
             f.write(f"          {message}\n\n")
     except OSError as e:
         log.warning(
-            f"write_update failed for {updates_path}: {e} — "
-            f"if permission denied, try: xattr -d com.apple.macl {updates_path}"
+            f"write_update failed for {updates_path}: {e}. "
+            f"If permission denied, try: xattr -d com.apple.macl {updates_path}"
         )
 
 
@@ -305,7 +305,7 @@ class ChangeHandler(FileSystemEventHandler):
             last_mtime = self._mtime_cache.get(event.src_path)
             if mtime is not None and mtime == last_mtime:
                 log.debug(
-                    f"Skipping {event.src_path} — mtime unchanged (xattr/metadata-only event)"
+                    f"Skipping {event.src_path}: mtime unchanged (xattr/metadata-only event)"
                 )
                 return
             if mtime is not None:
@@ -339,7 +339,7 @@ class ChangeHandler(FileSystemEventHandler):
             cached_hash = _cache.get(path, "")
 
         if new_hash == cached_hash:
-            log.debug(f"Skipping {path} — content unchanged (SHA256 match)")
+            log.debug(f"Skipping {path}: content unchanged (SHA256 match)")
             return
 
         content  = read_file(path)
@@ -383,7 +383,7 @@ class ChangeHandler(FileSystemEventHandler):
         server_response = push_change(self.config, rel_path, content)
 
         if server_response is None:
-            # Push failed — evict optimistic hash so the next event retries
+            # Push failed: evict optimistic hash so the next event retries
             with _hash_cache_lock:
                 _cache = load_hash_cache()
                 _cache.pop(path, None)
@@ -433,7 +433,7 @@ class ChangeHandler(FileSystemEventHandler):
                 save_hash_cache(_cache)
 
             if result.get("no_op"):
-                log.info(f"No-op sync: {rel_path} — identical content, agent skipped")
+                log.info(f"No-op sync: {rel_path} (identical content, agent skipped)")
                 return
 
             confidence = result.get("confidence", "?")
@@ -441,11 +441,11 @@ class ChangeHandler(FileSystemEventHandler):
             notify_mac("✅ Conflict resolved", f"Agent merged changes to {rel_path}")
             write_update(self.project_path, "✅",
                          self.config["developer_name"], rel_path,
-                         f"Merged with {dev_b['developer']} — confidence: {confidence}")
+                         f"Merged with {dev_b['developer']} (confidence: {confidence})")
             if confidence == "low":
                 write_update(self.project_path, "⚠️",
                              self.config["developer_name"], rel_path,
-                             "Low confidence merge — please review manually")
+                             "Low confidence merge, please review manually")
 
         except Exception as e:
             log.error(f"Agent failed to resolve conflict: {e}")
@@ -492,13 +492,13 @@ class PartnerPoller(threading.Thread):
                     continue
                 self.known_files.add(file_path)
                 developer = info.get("developer", "unknown")
-                # Skip our own files — we already logged those in _handle
+                # Skip our own files, already logged those in _handle
                 if developer == self.config["developer_name"]:
                     continue
                 intent = info.get("intent", "")
                 write_update(self.handler.project_path, "📄",
                              developer, file_path, intent)
-                print(f"📄 New file: {file_path} ({developer}) — {intent}")
+                print(f"📄 New file: {file_path} ({developer}): {intent}")
                 log.info(f"Partner new file: {file_path} from {developer}")
         except Exception as e:
             log.warning(f"New file poll error: {e}")
@@ -628,8 +628,8 @@ def run_daemon():
 
         observers.append((observer, config, handler, poller))
 
-    print(f"\n✅ Remi is awake — watching {len(configs)} project(s)")
-    log.info(f"Remi started — watching {len(configs)} project(s)")
+    print(f"\n✅ Remi is awake, watching {len(configs)} project(s)")
+    log.info(f"Remi started, watching {len(configs)} project(s)")
     print(f"👁  Watching for changes... (Ctrl-C to stop)\n")
 
     HEARTBEAT_TIMEOUT = 5 * 60  # restart poller if silent for 5 minutes
@@ -640,7 +640,7 @@ def run_daemon():
             for i, (observer, config, handler, poller) in enumerate(observers):
                 if not poller.is_alive() or (time.time() - poller.last_alive) > HEARTBEAT_TIMEOUT:
                     name = config.get("project_name", "unknown")
-                    log.warning(f"PartnerPoller for {name} is stale — restarting")
+                    log.warning(f"PartnerPoller for {name} is stale, restarting")
                     print(f"⚠️  Remi: restarting stalled poller for {name}")
                     new_poller = PartnerPoller(config, handler)
                     new_poller.start()

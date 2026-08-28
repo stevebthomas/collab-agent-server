@@ -6,7 +6,7 @@
 
 **Pre-push, intent-aware conflict detection for teams using AI-assisted development.**
 
-> *Git resolves conflicts after a push — at the syntax level. Remi resolves them before a push — at the intent level.*
+> *Git catches conflicts after a push, at the syntax level. Remi catches them before a push, at the level of what each developer was trying to do.*
 
 ---
 
@@ -14,7 +14,7 @@
 
 Vibecoding is here. Developers using Cursor, Claude Code, and similar tools now produce large, coherent chunks of AI-generated code in a single session. They move fast, but they often don't deeply understand every line their AI wrote.
 
-This creates a new category of collaboration failure: two developers are building in the same repo simultaneously, each with their AI assistant making interconnected changes across multiple files. They don't conflict in git — but they conflict in *intent*. One developer's agent restructured the collision system to be event-driven. The other's added direct calls to the old interface. The code merges cleanly. The game breaks at runtime.
+This creates a new category of collaboration failure: two developers are building in the same repo simultaneously, each with their AI assistant making interconnected changes across multiple files. They don't conflict in git; they conflict in *intent*. One developer's agent restructured the collision system to be event-driven. The other's added direct calls to the old interface. The code merges cleanly. The game breaks at runtime.
 
 Git was designed for humans who understand their own changes. Vibecoders need something different.
 
@@ -22,13 +22,13 @@ Git was designed for humans who understand their own changes. Vibecoders need so
 
 Remi runs as a silent background daemon on each developer's machine. When a file is saved, it:
 
-1. **Captures intent** — Claude Haiku generates a plain-English description of the file's purpose in the codebase, stored in the shared intent registry
-2. **Syncs with the team** — pushes the change and intent to a shared Flask server
-3. **Detects conflicts** — cross-references against teammates' recent changes across the full codebase
-4. **Resolves with Claude Opus** — the agent understands both developers' *intent*, not just their code, and produces a merged result that preserves what both were trying to accomplish
-5. **Writes to disk** — the resolved file lands silently in your project, ready to review and commit
+1. **Captures intent**: Claude Haiku generates a plain-English description of the file's purpose in the codebase, stored in the shared intent registry
+2. **Syncs with the team**: pushes the change and intent to a shared Flask server
+3. **Detects conflicts**: cross-references against teammates' recent changes across the full codebase
+4. **Resolves with Claude Opus**: the agent reads both developers' code and their stated intent, and produces a merged result that preserves what both were trying to accomplish
+5. **Writes to disk**: the resolved file lands silently in your project, ready to review and commit
 
-No merge dialogs. No terminal open. No workflow interruption.
+There's no merge dialog, no terminal to open, and no interruption to your workflow.
 
 ## Architecture
 
@@ -97,28 +97,28 @@ No merge dialogs. No terminal open. No workflow interruption.
 
 | File | Role |
 |---|---|
-| `watcher.py` | Background daemon — monitors all registered projects, debounces saves, detects real content changes via SHA256 hashing. Registers as launchd (macOS), systemd (Linux), or Task Scheduler (Windows). |
-| `agent.py` | Core AI layer — Claude Opus 4.6 analyzes intent conflicts, produces merged resolutions with cross-file risk flags and learned patterns |
-| `server.py` | Flask sync server — brokers changes between developers, persists to SQLite, deployed on Railway |
-| `remi.py` | CLI entry point — `remi init`, `remi status`, `remi log`, `remi rollback` |
-| `mapper.py` | Codebase relationship mapper — builds file dependency graph to give the agent cross-file context |
-| `compactor.py` | Event log compaction — collapses burst saves, deduplicates intents, filters noise (91% compression in testing) |
-| `event_log.py` | Append-only event log — clean separation between raw source log and rendered activity feed |
-| `install.py` | One-time machine setup — stores API key, registers background service for the current OS |
+| `watcher.py` | Background daemon: monitors all registered projects, debounces saves, detects real content changes via SHA256 hashing. Registers as launchd (macOS), systemd (Linux), or Task Scheduler (Windows). |
+| `agent.py` | Core AI layer: Claude Opus 4.6 analyzes intent conflicts, produces merged resolutions with cross-file risk flags and learned patterns |
+| `server.py` | Flask sync server: brokers changes between developers, persists to SQLite, deployed on Railway |
+| `remi.py` | CLI entry point: `remi init`, `remi status`, `remi log`, `remi rollback` |
+| `mapper.py` | Codebase relationship mapper: builds file dependency graph to give the agent cross-file context |
+| `compactor.py` | Event log compaction: collapses burst saves, deduplicates intents, filters noise (91% compression in testing) |
+| `event_log.py` | Append-only event log: clean separation between raw source log and rendered activity feed |
+| `install.py` | One-time machine setup: stores API key, registers background service for the current OS |
 
 ## Cross-Platform Daemon
 
 Remi's background watcher runs on macOS, Linux, and Windows. `install.py` detects the OS and registers the appropriate service automatically:
 
-- **macOS** — launchd (`~/Library/LaunchAgents/com.remi-agent.plist`), starts on login
-- **Linux** — systemd user service (`~/.config/systemd/user/remi-agent.service`), starts on login
-- **Windows** — Task Scheduler job, starts on login
+- **macOS**: launchd (`~/Library/LaunchAgents/com.remi-agent.plist`), starts on login
+- **Linux**: systemd user service (`~/.config/systemd/user/remi-agent.service`), starts on login
+- **Windows**: Task Scheduler job, starts on login
 
 The watcher logic itself (`watchdog`) is platform-agnostic. Only the daemon registration differs.
 
 ## What Claude Opus Receives
 
-The conflict resolution agent is given rich context beyond just the two code versions:
+The conflict resolution agent receives more than the two code versions:
 
 ```python
 analyze_and_resolve(
@@ -148,13 +148,13 @@ A key operational challenge: file watchers generate enormous noise. A single "sa
 
 `compactor.py` solves this with three strategies applied in sequence:
 
-- **Burst collapsing** — multiple saves to the same file within a 3-second window → single event
-- **Failed intent filtering** — drops events where Haiku returned an empty or trivial description
-- **Description deduplication** — suppresses re-emission when a file's intent hasn't changed
+- **Burst collapsing**: multiple saves to the same file within a 3-second window → single event
+- **Failed intent filtering**: drops events where Haiku returned an empty or trivial description
+- **Description deduplication**: suppresses re-emission when a file's intent hasn't changed
 
 **Result:** 91% reduction in log entries during testing on a real project.
 
-The raw event log (`event_log.py`) captures everything before compaction as append-only NDJSON — the compacted activity feed is a derived view, not the source of truth. This means compaction logic can be tuned without losing history.
+The raw event log (`event_log.py`) captures everything before compaction as append-only NDJSON. The compacted activity feed is a derived view, not the source of truth. This means compaction logic can be tuned without losing history.
 
 ## Setup
 
@@ -201,7 +201,7 @@ remi help              Show all commands
 
 ## Configuration
 
-Each project's config lives in `.remi/config.json` (gitignored — each developer sets their own):
+Each project's config lives in `.remi/config.json` (gitignored; each developer sets their own):
 
 ```json
 {
@@ -223,15 +223,15 @@ Remi and git operate at different layers and are designed to complement each oth
 - **Git** resolves *syntactic* conflicts, after a push, on a per-line basis
 - **Remi** resolves *semantic* conflicts, before a push, with understanding of developer intent
 
-Remi does not make commits. It writes the merged result to disk, then gets out of the way. You review and commit normally. This is intentional — Remi shouldn't decide what goes into your git history.
+Remi does not make commits. It writes the merged result to disk, then gets out of the way. You review and commit normally. This is intentional: Remi shouldn't decide what goes into your git history.
 
 ## Design Decisions
 
-**Why pre-push?** Post-push resolution (git merge, PRs) is already well-solved. The gap is the period when two developers are both actively building — AI-assisted or not — before either has committed. That's when the collision happens, and that's the only window where intent is still fresh and resolvable automatically.
+**Why pre-push?** Post-push resolution (git merge, PRs) is already well-solved. The gap is the period when two developers are both actively building (AI-assisted or not) before either has committed. That's when the collision happens, and that's the only window where intent is still fresh and resolvable automatically.
 
-**Why intent matters for vibecoders?** When a developer writes code manually, they understand it. When an AI writes 200 lines and the developer accepts it, they may not. Remi's intent registry captures the *purpose* of each file at the moment it's written — before that context is lost.
+**Why intent matters for vibecoders?** When a developer writes code manually, they understand it. When an AI writes 200 lines and the developer accepts it, they may not. Remi's intent registry captures the *purpose* of each file at the moment it's written, before that context is lost.
 
-**Why Claude Haiku 4.5 for intent, Claude Opus 4.6 for resolution?** These two tasks have opposite profiles. Intent inference (`claude-haiku-4-5-20251001`) is high-frequency and low-complexity — it runs on every file save, produces a single descriptive sentence, and needs to be fast enough not to interrupt the developer's workflow. At $1/M input tokens and more than 2× the speed of Sonnet, Haiku is purpose-built for this. Conflict resolution (`claude-opus-4-6`) is low-frequency and high-complexity — it runs only when a real conflict is detected, reasons across two full codebases and their cross-file dependencies, and produces a complete merged file with risk analysis. Opus is the right call when quality is the only thing that matters and the event is rare enough that cost per-resolution is negligible. Using the wrong model in either direction would mean paying Opus prices for thousands of trivial sentence generations, or getting shallow reasoning on a merge that could silently corrupt a shared codebase.
+**Why Claude Haiku 4.5 for intent, Claude Opus 4.6 for resolution?** These two tasks have opposite profiles. Intent inference (`claude-haiku-4-5-20251001`) is high-frequency and low-complexity: it runs on every file save, produces a single descriptive sentence, and needs to be fast enough not to interrupt the developer's workflow. At $1/M input tokens and more than 2× the speed of Sonnet, Haiku is purpose-built for this. Conflict resolution (`claude-opus-4-6`) is low-frequency and high-complexity: it runs only when a real conflict is detected, reasons across two full codebases and their cross-file dependencies, and produces a complete merged file with risk analysis. Opus is the right call when quality is the only thing that matters and the event is rare enough that cost per-resolution is negligible. Using the wrong model in either direction would mean paying Opus prices for thousands of trivial sentence generations, or getting shallow reasoning on a merge that could silently corrupt a shared codebase.
 
 **Why SQLite on Railway?** Simple, zero-dependency persistence that survives server restarts. The 24-hour TTL window keeps the database small. A Redis layer would be a natural next step at scale, but SQLite is the right call for the two-developer use case this is optimized for.
 
@@ -241,7 +241,7 @@ Remi does not make commits. It writes the merged result to disk, then gets out o
 
 **Two-developer ceiling.** The current conflict model assumes exactly two developers. The server's `UNIQUE(room_id, file_path, developer)` constraint and `/push` conflict logic both reflect this. N-way conflicts are not handled. Recommended workaround for larger teams: clear file ownership conventions.
 
-**iCloud Desktop footgun.** Projects on `~/Desktop/` on macOS are likely iCloud-synced, which generates unexpected filesystem metadata events. Remi's SHA256 content-hashing guards against acting on these, but it's worth noting as a setup consideration.
+**iCloud Desktop footgun.** Projects on `~/Desktop/` on macOS are likely iCloud-synced, which generates unexpected filesystem metadata events. Remi's SHA256 content-hashing guards against acting on these, but it remains a setup consideration.
 
 ## Status
 
